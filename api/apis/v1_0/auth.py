@@ -1,48 +1,72 @@
 from datetime import timedelta
 
-from flask_jwt_extended import (
-    create_access_token,
-    create_refresh_token,
-    get_jwt_identity,
-    jwt_refresh_token_required)
-from flask_restplus import (Resource, reqparse, fields, Model, marshal_with)
+from flask_jwt_extended import (create_access_token,
+                                create_refresh_token,
+                                get_jwt_identity,
+                                jwt_refresh_token_required)
+from flask_restplus import (Resource,
+                            fields)
 
-from . import api
+from . import api, authorizations
 
-auth = api.namespace('auth', description='Auth')
-
-parser = reqparse.RequestParser()
-parser.add_argument('username',
-                    type=str,
-                    location='json',
-                    required=True,
-                    nullable=False)
-parser.add_argument('password',
-                    type=str,
-                    location='json',
-                    required=True,
-                    nullable=False)
+ns = api.namespace('auth', description='Auth', authorizations=authorizations)
 
 REFRESH_TOKEN_EXPIRES_IN = timedelta(days=365)
 ACCESS_TOKEN_EXPIRES_IN = timedelta(hours=1)
 
-token_field = {
-    'token': fields.String,
-    'expire_in': fields.Integer
-}
+token_model = ns.model('Token', {
+    'token': fields.String(
+        description='JWT token'),
+    'expire_in': fields.Integer(
+        description='time in seconds, after which token will expire')
+})
 
 
-@auth.route('/')
+@ns.route('/')
 class Auth(Resource):
-    @marshal_with(Model('auth_response', {
-        'access_token': fields.Nested(token_field),
-        'refresh_token': fields.Nested(token_field)
-    }))
+    post_parser = ns.parser()
+    post_parser.add_argument('username',
+                             type=str,
+                             location='json',
+                             required=True,
+                             nullable=False)
+    post_parser.add_argument('password',
+                             type=str,
+                             location='json',
+                             required=True,
+                             nullable=False)
+
+    @ns.expect(ns.model(
+        name='User',
+        model={
+            'username': fields.String(
+                required=True,
+                description='username of the User',
+                example='ivan_ivanov'),
+            'password': fields.String(
+                min_length=8,
+                max_length=32,
+                example='Qwerty123')
+        }
+    ))
+    @ns.response(400, 'Bad Request')
+    @ns.marshal_with(
+        fields=ns.model(
+            name='Auth',
+            model={
+                'access_token': fields.Nested(token_model),
+                'refresh_token': fields.Nested(token_model)
+            }),
+        code=200,
+        description='Authenticated')
     def post(self):
-        args = parser.parse_args()
+        args = self.post_parser.parse_args()
+
         username = args['username']
         password = args['password']
+
         # find user
+
         user_id = 123
         return {
                    'access_token': {
@@ -56,13 +80,19 @@ class Auth(Resource):
                }, 200
 
 
-@auth.route('/refresh')
+@ns.route('/refresh')
 class RefreshToken(Resource):
     method_decorators = [jwt_refresh_token_required]
 
-    @marshal_with(Model('refresh_response', {
-        'access_token': fields.Nested(token_field)
-    }))
+    @ns.response(401, 'Unauthorized')
+    @ns.marshal_with(
+        fields=ns.model(
+            name='Refresh Token Response',
+            model={
+                'access_token': fields.Nested(token_model)
+            }),
+        code=200,
+    )
     def post(self):
         identity = get_jwt_identity()
         return {
